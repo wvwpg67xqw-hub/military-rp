@@ -16,9 +16,6 @@ const {
     Routes
 } = require("discord.js");
 
-// =====================
-// CLIENT
-// =====================
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -26,9 +23,7 @@ const client = new Client({
     ]
 });
 
-// =====================
 // LOAD COMMANDS
-// =====================
 client.commands = new Map();
 
 const commandFiles = fs.readdirSync("./commands").filter(f => f.endsWith(".js"));
@@ -38,9 +33,7 @@ for (const file of commandFiles) {
     client.commands.set(cmd.name, cmd);
 }
 
-// =====================
-// AUTO DEPLOY COMMANDS
-// =====================
+// AUTO DEPLOY
 async function deployCommands(client) {
 
     const commands = [];
@@ -68,22 +61,15 @@ async function deployCommands(client) {
     }
 }
 
-// =====================
 // READY
-// =====================
 client.once(Events.ClientReady, async (c) => {
     console.log(`✅ Logged in as ${c.user.tag}`);
     await deployCommands(client);
 });
 
-// =====================
-// INTERACTIONS ROUTER ONLY
-// =====================
+// INTERACTIONS
 client.on(Events.InteractionCreate, async (interaction) => {
 
-    // =====================
-    // SLASH COMMANDS
-    // =====================
     if (interaction.isChatInputCommand()) {
 
         const command = client.commands.get(interaction.commandName);
@@ -92,9 +78,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return command.execute(interaction);
     }
 
-    // =====================
-    // REQUEST BUTTON
-    // =====================
+    // BUTTON
     if (interaction.isButton() && interaction.customId === "request_command") {
 
         const modal = new ModalBuilder()
@@ -128,9 +112,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return interaction.showModal(modal);
     }
 
-    // =====================
-    // MODAL SUBMIT
-    // =====================
+    // MODAL
     if (interaction.isModalSubmit() && interaction.customId === "command_request_modal") {
 
         const owner = await client.users.fetch(process.env.OWNER_ID);
@@ -168,9 +150,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
     }
 
-    // =====================
     // ACCEPT / DENY
-    // =====================
     if (interaction.isButton()) {
 
         if (interaction.user.id !== process.env.OWNER_ID) {
@@ -202,5 +182,4 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 });
 
-// =====================
 client.login(process.env.TOKEN);
