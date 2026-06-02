@@ -1,96 +1,206 @@
-require('dotenv').config();
+require("dotenv").config();
+const fs = require("fs");
+
 const {
     Client,
     GatewayIntentBits,
+    Events,
+    EmbedBuilder,
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
-    Events,
-    EmbedBuilder
-} = require('discord.js');
+    REST,
+    Routes
+} = require("discord.js");
 
+// =====================
+// CLIENT
+// =====================
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers
+    ]
 });
 
-client.once('ready', () => {
-    console.log(`Logged in as ${client.user.tag}`);
+// =====================
+// LOAD COMMANDS
+// =====================
+client.commands = new Map();
+
+const commandFiles = fs.readdirSync("./commands").filter(f => f.endsWith(".js"));
+
+for (const file of commandFiles) {
+    const cmd = require(`./commands/${file}`);
+    client.commands.set(cmd.name, cmd);
+}
+
+// =====================
+// AUTO DEPLOY COMMANDS
+// =====================
+async function deployCommands(client) {
+
+    const commands = [];
+
+    for (const cmd of client.commands.values()) {
+        commands.push({
+            name: cmd.name,
+            description: cmd.description
+        });
+    }
+
+    const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
+
+    try {
+        console.log("🔄 Deploying slash commands...");
+
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands }
+        );
+
+        console.log("✅ Commands deployed.");
+    } catch (err) {
+        console.error("❌ Deploy error:", err);
+    }
+}
+
+// =====================
+// READY
+// =====================
+client.once(Events.ClientReady, async (c) => {
+    console.log(`✅ Logged in as ${c.user.tag}`);
+    await deployCommands(client);
 });
 
-client.on(Events.InteractionCreate, async interaction => {
+// =====================
+// INTERACTIONS ROUTER ONLY
+// =====================
+client.on(Events.InteractionCreate, async (interaction) => {
 
-    // Button Click
-    if (interaction.isButton() && interaction.customId === 'request_command') {
+    // =====================
+    // SLASH COMMANDS
+    // =====================
+    if (interaction.isChatInputCommand()) {
+
+        const command = client.commands.get(interaction.commandName);
+        if (!command) return;
+
+        return command.execute(interaction);
+    }
+
+    // =====================
+    // REQUEST BUTTON
+    // =====================
+    if (interaction.isButton() && interaction.customId === "request_command") {
 
         const modal = new ModalBuilder()
-            .setCustomId('command_request_modal')
-            .setTitle('Request a Command');
+            .setCustomId("command_request_modal")
+            .setTitle("Request a Command");
 
-        const commandName = new TextInputBuilder()
-            .setCustomId('command_name')
-            .setLabel('Command Name')
+        const name = new TextInputBuilder()
+            .setCustomId("command_name")
+            .setLabel("Command Name")
             .setStyle(TextInputStyle.Short)
             .setRequired(true);
 
-        const description = new TextInputBuilder()
-            .setCustomId('description')
-            .setLabel('What should it do?')
+        const desc = new TextInputBuilder()
+            .setCustomId("description")
+            .setLabel("What should it do?")
             .setStyle(TextInputStyle.Paragraph)
             .setRequired(true);
 
         const reason = new TextInputBuilder()
-            .setCustomId('reason')
-            .setLabel('Why should it be added?')
+            .setCustomId("reason")
+            .setLabel("Why should it be added?")
             .setStyle(TextInputStyle.Paragraph)
             .setRequired(true);
 
         modal.addComponents(
-            new ActionRowBuilder().addComponents(commandName),
-            new ActionRowBuilder().addComponents(description),
+            new ActionRowBuilder().addComponents(name),
+            new ActionRowBuilder().addComponents(desc),
             new ActionRowBuilder().addComponents(reason)
         );
 
         return interaction.showModal(modal);
     }
 
-    // Modal Submit
-    if (
-        interaction.isModalSubmit() &&
-        interaction.customId === 'command_request_modal'
-    ) {
-
-        const commandName =
-            interaction.fields.getTextInputValue('command_name');
-
-        const description =
-            interaction.fields.getTextInputValue('description');
-
-        const reason =
-            interaction.fields.getTextInputValue('reason');
+    // =====================
+    // MODAL SUBMIT
+    // =====================
+    if (interaction.isModalSubmit() && interaction.customId === "command_request_modal") {
 
         const owner = await client.users.fetch(process.env.OWNER_ID);
 
         const embed = new EmbedBuilder()
-            .setTitle('📨 New Command Request')
+            .setTitle("📨 New Command Request")
             .addFields(
-                { name: 'User', value: `${interaction.user.tag}` },
-                { name: 'Server', value: interaction.guild.name },
-                { name: 'Command', value: commandName },
-                { name: 'Description', value: description },
-                { name: 'Reason', value: reason }
+                { name: "User", value: interaction.user.tag },
+                { name: "Server", value: interaction.guild.name },
+                { name: "Command", value: interaction.fields.getTextInputValue("command_name") },
+                { name: "Description", value: interaction.fields.getTextInputValue("description") },
+                { name: "Reason", value: interaction.fields.getTextInputValue("reason") }
             )
             .setTimestamp();
 
-        await owner.send({ embeds: [embed] });
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`accept_${interaction.user.id}`)
+                .setLabel("✅ Accept")
+                .setStyle(ButtonStyle.Success),
 
-        await interaction.reply({
-            content: '✅ Your command request has been submitted!',
+            new ButtonBuilder()
+                .setCustomId(`deny_${interaction.user.id}`)
+                .setLabel("❌ Deny")
+                .setStyle(ButtonStyle.Danger)
+        );
+
+        try {
+            await owner.send({ embeds: [embed], components: [row] });
+        } catch {}
+
+        return interaction.reply({
+            content: "✅ Request sent.",
             ephemeral: true
         });
     }
+
+    // =====================
+    // ACCEPT / DENY
+    // =====================
+    if (interaction.isButton()) {
+
+        if (interaction.user.id !== process.env.OWNER_ID) {
+            return interaction.reply({
+                content: "❌ Not allowed.",
+                ephemeral: true
+            });
+        }
+
+        if (interaction.customId.startsWith("accept_")) {
+
+            const userId = interaction.customId.split("_")[1];
+            const user = await client.users.fetch(userId);
+
+            await user.send("✅ Your request was ACCEPTED!");
+
+            return interaction.reply({ content: "Accepted.", ephemeral: true });
+        }
+
+        if (interaction.customId.startsWith("deny_")) {
+
+            const userId = interaction.customId.split("_")[1];
+            const user = await client.users.fetch(userId);
+
+            await user.send("❌ Your request was DENIED.");
+
+            return interaction.reply({ content: "Denied.", ephemeral: true });
+        }
+    }
 });
 
+// =====================
 client.login(process.env.TOKEN);
